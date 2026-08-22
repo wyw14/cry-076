@@ -32,25 +32,73 @@ type VisibilityRule struct {
 }
 
 func (r VisibilityRule) Visible(scenario TargetScenario, values map[string]any) bool {
-	if len(r.Scenarios) > 0 {
-		allowed := false
-		for _, item := range r.Scenarios {
-			if item == scenario {
-				allowed = true
-				break
-			}
+	evaluation := newVisibilityEvaluation(r, scenario, values)
+	return evaluation.visible()
+}
+
+type prerequisiteState struct {
+	field   string
+	present bool
+	filled  bool
+}
+
+type visibilityEvaluation struct {
+	requestedScenario TargetScenario
+	allowedScenarios  map[TargetScenario]struct{}
+	prerequisites     []prerequisiteState
+	restrictScenario  bool
+}
+
+func newVisibilityEvaluation(rule VisibilityRule, scenario TargetScenario, values map[string]any) visibilityEvaluation {
+	evaluation := visibilityEvaluation{
+		requestedScenario: scenario,
+		allowedScenarios:  make(map[TargetScenario]struct{}, len(rule.Scenarios)),
+		prerequisites:     make([]prerequisiteState, 0, len(rule.Requires)),
+		restrictScenario:  len(rule.Scenarios) > 0,
+	}
+	for _, allowed := range rule.Scenarios {
+		if allowed == "" {
+			continue
 		}
-		if !allowed {
-			return false
+		evaluation.allowedScenarios[allowed] = struct{}{}
+	}
+	for _, field := range rule.Requires {
+		if field == "" {
+			continue
+		}
+		value, present := values[field]
+		evaluation.prerequisites = append(evaluation.prerequisites, prerequisiteState{
+			field: field, present: present, filled: present && !isEmptyValue(value),
+		})
+	}
+	return evaluation
+}
+
+func (e visibilityEvaluation) visible() bool {
+	if !e.scenarioAllowed() {
+		return false
+	}
+	return e.dependenciesReady()
+}
+
+func (e visibilityEvaluation) scenarioAllowed() bool {
+	if !e.restrictScenario {
+		return true
+	}
+	_, allowed := e.allowedScenarios[e.requestedScenario]
+	return allowed
+}
+
+func (e visibilityEvaluation) dependenciesReady() bool {
+	if len(e.prerequisites) == 0 {
+		return true
+	}
+	for _, prerequisite := range e.prerequisites {
+		if prerequisite.present && prerequisite.filled {
+			return true
 		}
 	}
-	for _, field := range r.Requires {
-		value, exists := values[field]
-		if !exists || isEmptyValue(value) {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 type FieldSpec struct {
