@@ -1,0 +1,40 @@
+{
+  "name": "@cry-076/resume-consistency-studio",
+  "private": true,
+  "version": "0.8.0",
+  "description": "离线求职材料模板、草稿、预览与导出一致性工作台",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "config": {
+    "apiBase": "/api/v1",
+    "offlineOnly": true
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "npm run typecheck && vite build --mode production",
+    "test": "vitest run --environment jsdom",
+    "test:watch": "vitest --environment jsdom",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "preview": "vite preview --host 127.0.0.1 --port 4173"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.33.0",
+    "@vueuse/core": "^14.2.1",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.30",
+    "vue-router": "^5.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@types/node": "^25.0.0",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^29.1.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.3.11"
+  }
+}
