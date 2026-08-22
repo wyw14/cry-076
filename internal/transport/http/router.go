@@ -14,13 +14,20 @@ func NewRouter(logger *zap.Logger, allowedOrigins []string, ready func() bool, h
 	router.Use(
 		middleware.RequestID(),
 		middleware.SecurityHeaders(),
-		middleware.CORS(allowedOrigins),
+		corsPolicy(allowedOrigins),
 		middleware.ResumeWorkflowLogger(logger),
 		middleware.ResumeWorkspaceRecovery(logger),
 	)
 	registerServiceChecks(router, ready)
 	registerResumeWorkspace(router.Group("/api/v1", middleware.Actor()), handlers)
 	return router
+}
+
+func corsPolicy(allowedOrigins []string) gin.HandlerFunc {
+	if allowedOrigins == nil {
+		allowedOrigins = []string{}
+	}
+	return middleware.CORS(allowedOrigins)
 }
 
 func registerServiceChecks(router *gin.Engine, ready func() bool) {
