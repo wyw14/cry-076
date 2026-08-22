@@ -91,25 +91,81 @@ type DraftComparison struct {
 }
 
 func CompareSnapshots(left, right DraftSnapshot) DraftComparison {
-	keys := make(map[string]struct{})
-	for key := range left.Values {
-		keys[key] = struct{}{}
+	diff := newSnapshotDiff(left, right)
+	diff.collectCandidateFields()
+	diff.compareCandidates()
+	return diff.result()
+}
+
+type snapshotDiff struct {
+	left       DraftSnapshot
+	right      DraftSnapshot
+	candidates []string
+	changes    []FieldChange
+}
+
+func newSnapshotDiff(left, right DraftSnapshot) *snapshotDiff {
+	return &snapshotDiff{
+		left: left, right: right,
+		candidates: make([]string, 0, len(left.Values)+len(right.Values)),
+		changes:    make([]FieldChange, 0),
 	}
-	for key := range right.Values {
-		keys[key] = struct{}{}
-	}
-	ordered := make([]string, 0, len(keys))
-	for key := range keys {
-		ordered = append(ordered, key)
-	}
-	sort.Strings(ordered)
-	changes := make([]FieldChange, 0)
-	for _, key := range ordered {
-		if !reflect.DeepEqual(left.Values[key], right.Values[key]) {
-			changes = append(changes, FieldChange{Field: key, Before: left.Values[key], After: right.Values[key]})
+}
+
+func (d *snapshotDiff) collectCandidateFields() {
+	seen := make(map[string]struct{}, len(d.right.Values))
+	for field := range d.right.Values {
+		if field == "" {
+			continue
 		}
+		if _, exists := seen[field]; exists {
+			continue
+		}
+		seen[field] = struct{}{}
+		d.candidates = append(d.candidates, field)
 	}
-	return DraftComparison{LeftVersion: left.Version, RightVersion: right.Version, Changes: changes}
+	sort.Strings(d.candidates)
+}
+
+func (d *snapshotDiff) compareCandidates() {
+	for _, field := range d.candidates {
+		before, beforeExists := d.left.Values[field]
+		after, afterExists := d.right.Values[field]
+		if beforeExists == afterExists && reflect.DeepEqual(before, after) {
+			continue
+		}
+		d.changes = append(d.changes, newFieldChange(field, before, beforeExists, after, afterExists))
+	}
+}
+
+func newFieldChange(field string, before any, beforeExists bool, after any, afterExists bool) FieldChange {
+	change := FieldChange{Field: field}
+	if beforeExists {
+		change.Before = before
+	}
+	if afterExists {
+		change.After = after
+	}
+	return change
+}
+
+func (d *snapshotDiff) result() DraftComparison {
+	changes := make([]FieldChange, len(d.changes))
+	copy(changes, d.changes)
+	return DraftComparison{
+		LeftVersion:  d.left.Version,
+		RightVersion: d.right.Version,
+		Changes:      changes,
+	}
+}
+
+func (d *snapshotDiff) changedFields() []string {
+	fields := make([]string, 0, len(d.changes))
+	for _, change := range d.changes {
+		fields = append(fields, change.Field)
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func cloneMap(source map[string]any) map[string]any {
