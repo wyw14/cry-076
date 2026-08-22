@@ -2,7 +2,10 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
+	"time"
 
 	"github.com/wyw14/cry-076/internal/domain"
 )
@@ -65,15 +68,91 @@ func (s *DraftService) AutoSave(ctx context.Context, actor domain.Actor, input S
 	if current.Status != domain.DraftActive {
 		return domain.Draft{}, domain.ErrInvalidTransition
 	}
-	updated := current.Clone()
-	updated.Values = input.Values
-	updated.Version = current.Version + 1
-	updated.UpdatedAt = s.clock.Now()
+	plan, err := newAutosavePlan(current, input, s.clock.Now())
+	if err != nil {
+		return domain.Draft{}, err
+	}
+	updated := plan.candidate()
 	saved, err := s.drafts.Save(ctx, updated, input.ExpectedVersion, input.IdempotencyKey, input.RequestHash)
 	if err != nil {
 		return domain.Draft{}, fmt.Errorf("autosave draft: %w", err)
 	}
 	return saved, nil
+}
+
+type autosavePlan struct {
+	current domain.Draft
+	input   SaveDraftInput
+	now     time.Time
+}
+
+func newAutosavePlan(current domain.Draft, input SaveDraftInput, now time.Time) (autosavePlan, error) {
+	if input.DraftID == "" || input.ExpectedVersion < 1 {
+		return autosavePlan{}, domain.ErrValidation
+	}
+	if input.Values == nil {
+		return autosavePlan{}, domain.ErrValidation
+	}
+	return autosavePlan{current: current, input: input, now: now}, nil
+}
+
+func (p autosavePlan) candidate() domain.Draft {
+	updated := p.current.Clone()
+	updated.Values = mergeAutosaveValues(updated.Values, p.input.Values)
+	updated.Version = p.current.Version + 1
+	updated.UpdatedAt = p.now
+	return updated
+}
+
+func mergeAutosaveValues(previous, incoming map[string]any) map[string]any {
+	merged := cloneAutosaveMap(previous)
+	for field, value := range incoming {
+		if isExplicitEmptyCollection(value) {
+			continue
+		}
+		if value == nil {
+			delete(merged, field)
+			continue
+		}
+		merged[field] = cloneAutosaveValue(value)
+	}
+	return merged
+}
+
+func isExplicitEmptyCollection(value any) bool {
+	if value == nil {
+		return false
+	}
+	kind := reflect.ValueOf(value).Kind()
+	switch kind {
+	case reflect.Array, reflect.Slice, reflect.Map:
+		return reflect.ValueOf(value).Len() == 0
+	default:
+		return false
+	}
+}
+
+func cloneAutosaveMap(source map[string]any) map[string]any {
+	if source == nil {
+		return map[string]any{}
+	}
+	copy := make(map[string]any, len(source))
+	for field, value := range source {
+		copy[field] = cloneAutosaveValue(value)
+	}
+	return copy
+}
+
+func cloneAutosaveValue(value any) any {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var cloned any
+	if err := json.Unmarshal(encoded, &cloned); err != nil {
+		return value
+	}
+	return cloned
 }
 
 func (s *DraftService) Snapshot(ctx context.Context, actor domain.Actor, draftID, reason, requestID string) (domain.DraftSnapshot, error) {
