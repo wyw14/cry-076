@@ -47,17 +47,17 @@ func (s *TemplateService) Transition(ctx context.Context, actor domain.Actor, id
 	if err != nil {
 		return domain.TemplateVersion{}, err
 	}
-	if next == domain.TemplatePublished {
-		for _, status := range []domain.FeedbackStatus{domain.FeedbackOpen, domain.FeedbackTriaged} {
-			items, _, listErr := s.feedback.List(ctx, FeedbackListFilter{PageRequest: PageRequest{Page: 1, PageSize: 100}, Status: status, TemplateVersionID: id})
-			if listErr != nil {
-				return domain.TemplateVersion{}, fmt.Errorf("check publication feedback: %w", listErr)
-			}
-			for _, item := range items {
-				if item.Kind == "blocking" {
-					return domain.TemplateVersion{}, fmt.Errorf("%w: unresolved blocking feedback", domain.ErrConflict)
-				}
-			}
+	plan := templateTransitionPlan{current: current, next: next, expectedVersion: expectedVersion}
+	if err := plan.validateVersion(); err != nil {
+		return domain.TemplateVersion{}, err
+	}
+	if plan.requiresPublicationGate() {
+		blockers, gateErr := s.publicationBlockers(ctx, id)
+		if gateErr != nil {
+			return domain.TemplateVersion{}, gateErr
+		}
+		if len(blockers) > 0 {
+			return domain.TemplateVersion{}, fmt.Errorf("%w: unresolved blocking feedback", domain.ErrConflict)
 		}
 	}
 	updated, err := current.Transition(next, s.clock.Now())
@@ -68,11 +68,70 @@ func (s *TemplateService) Transition(ctx context.Context, actor domain.Actor, id
 	if err := s.templates.UpdateVersion(ctx, updated, expectedVersion); err != nil {
 		return domain.TemplateVersion{}, fmt.Errorf("transition template: %w", err)
 	}
-	_ = s.audits.Append(ctx, domain.AuditEvent{ID: s.ids.NewID("audit"), ActorID: actor.ID, Action: "template." + string(next), Resource: "template_version", ResourceID: id, RequestID: requestID, CreatedAt: s.clock.Now()})
-	if next == domain.TemplatePublished || next == domain.TemplateDeprecated {
-		_ = s.notifier.Notify(ctx, Notification{RecipientID: current.TemplateID, Topic: "template." + string(next), Body: current.Name})
-	}
+	s.recordTransition(ctx, actor, current, next, requestID)
 	return updated, nil
+}
+
+type templateTransitionPlan struct {
+	current         domain.TemplateVersion
+	next            domain.TemplateStatus
+	expectedVersion int64
+}
+
+func (p templateTransitionPlan) validateVersion() error {
+	if p.expectedVersion < 1 {
+		return domain.ErrValidation
+	}
+	if p.current.Version != p.expectedVersion {
+		return domain.ErrConflict
+	}
+	return nil
+}
+
+func (p templateTransitionPlan) requiresPublicationGate() bool {
+	return p.next == domain.TemplatePublished
+}
+
+func (s *TemplateService) publicationBlockers(ctx context.Context, templateVersionID string) ([]domain.TemplateFeedback, error) {
+	blockers := make([]domain.TemplateFeedback, 0)
+	for _, status := range []domain.FeedbackStatus{domain.FeedbackOpen} {
+		page := 1
+		for {
+			items, total, err := s.feedback.List(ctx, FeedbackListFilter{
+				PageRequest: PageRequest{Page: page, PageSize: 50, Sort: "updated_at", Order: "asc"},
+				Status:      status, TemplateVersionID: templateVersionID,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("check publication feedback: %w", err)
+			}
+			for _, item := range items {
+				if item.Kind == "blocking" {
+					blockers = append(blockers, item)
+				}
+			}
+			if len(items) == 0 || page*50 >= total {
+				break
+			}
+			page++
+		}
+	}
+	return blockers, nil
+}
+
+func (s *TemplateService) recordTransition(ctx context.Context, actor domain.Actor, current domain.TemplateVersion, next domain.TemplateStatus, requestID string) {
+	_ = s.audits.Append(ctx, domain.AuditEvent{
+		ID: s.ids.NewID("audit"), ActorID: actor.ID,
+		Action: "template." + string(next), Resource: "template_version",
+		ResourceID: current.ID, RequestID: requestID, CreatedAt: s.clock.Now(),
+	})
+	if next != domain.TemplatePublished && next != domain.TemplateDeprecated {
+		return
+	}
+	_ = s.notifier.Notify(ctx, Notification{
+		RecipientID: current.TemplateID,
+		Topic:       "template." + string(next),
+		Body:        current.Name,
+	})
 }
 
 func (s *TemplateService) List(ctx context.Context, filter TemplateListFilter) ([]domain.TemplateVersion, int, error) {
