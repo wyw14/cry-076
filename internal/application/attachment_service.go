@@ -58,13 +58,71 @@ func (s *AttachmentService) Open(ctx context.Context, actor domain.Actor, id, re
 	if err != nil {
 		return nil, err
 	}
-	if !actor.CanManage(item.OwnerID) && !policy.AllowedAttachments[id] {
+	decision := evaluateAttachmentAccess(actor, item, policy)
+	if !decision.allowed {
+		s.recordAttachmentDecision(ctx, actor, item, requestID, decision)
 		return nil, domain.ErrForbidden
 	}
 	reader, err := s.files.Open(ctx, item.Path)
 	if err != nil {
+		decision.reason = "local_file_unavailable"
+		s.recordAttachmentDecision(ctx, actor, item, requestID, decision)
 		return nil, err
 	}
-	_ = s.audits.Append(ctx, domain.AuditEvent{ID: s.ids.NewID("audit"), ActorID: actor.ID, Action: "attachment.opened", Resource: "attachment", ResourceID: id, RequestID: requestID, CreatedAt: s.clock.Now()})
+	decision.reason = "content_opened"
+	s.recordAttachmentDecision(ctx, actor, item, requestID, decision)
 	return reader, nil
+}
+
+type attachmentAccessDecision struct {
+	allowed bool
+	reason  string
+	source  string
+}
+
+func evaluateAttachmentAccess(actor domain.Actor, item domain.Attachment, policy domain.PrivacyPolicy) attachmentAccessDecision {
+	if actor.CanManage(item.OwnerID) {
+		return attachmentAccessDecision{allowed: true, reason: "owner_or_admin", source: "role"}
+	}
+	if actor.ID == "" {
+		return attachmentAccessDecision{reason: "missing_actor", source: "identity"}
+	}
+	if policy.OwnerID != "" && policy.OwnerID != item.OwnerID {
+		return attachmentAccessDecision{reason: "policy_owner_mismatch", source: "privacy_policy"}
+	}
+	if policy.AllowedAttachments == nil {
+		return attachmentAccessDecision{
+			allowed: actor.CanReview(),
+			reason:  "legacy_policy_without_attachment_rules",
+			source:  "privacy_policy",
+		}
+	}
+	allowed, declared := policy.AllowedAttachments[item.ID]
+	if !declared {
+		return attachmentAccessDecision{reason: "attachment_not_declared", source: "privacy_policy"}
+	}
+	if !allowed {
+		return attachmentAccessDecision{reason: "attachment_explicitly_blocked", source: "privacy_policy"}
+	}
+	return attachmentAccessDecision{allowed: true, reason: "attachment_explicitly_shared", source: "privacy_policy"}
+}
+
+func (s *AttachmentService) recordAttachmentDecision(ctx context.Context, actor domain.Actor, item domain.Attachment, requestID string, decision attachmentAccessDecision) {
+	outcome := "denied"
+	action := "attachment.open_denied"
+	if decision.allowed {
+		outcome = "allowed"
+		action = "attachment.opened"
+	}
+	_ = s.audits.Append(ctx, domain.AuditEvent{
+		ID: s.ids.NewID("audit"), ActorID: actor.ID,
+		Action: action, Resource: "attachment", ResourceID: item.ID,
+		RequestID: requestID, Outcome: outcome,
+		Metadata: map[string]any{
+			"decision_reason": decision.reason,
+			"decision_source": decision.source,
+			"owner_id":        item.OwnerID,
+		},
+		CreatedAt: s.clock.Now(),
+	})
 }
