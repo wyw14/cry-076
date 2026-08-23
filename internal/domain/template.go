@@ -90,15 +90,12 @@ func (e visibilityEvaluation) scenarioAllowed() bool {
 }
 
 func (e visibilityEvaluation) dependenciesReady() bool {
-	if len(e.prerequisites) == 0 {
-		return true
-	}
 	for _, prerequisite := range e.prerequisites {
-		if prerequisite.present && prerequisite.filled {
-			return true
+		if !prerequisite.present || !prerequisite.filled {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 type FieldSpec struct {
