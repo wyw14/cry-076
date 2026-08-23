@@ -62,7 +62,11 @@ func (e SwitchExecution) Output() SwitchResult {
 }
 
 func (e SwitchExecution) RecoveryPoint(id, reason string, now time.Time) DraftSnapshot {
-	return NewSnapshot(id, e.output.Draft, reason, now)
+	// The rollback snapshot must capture the draft as it was BEFORE the
+	// switch (e.source), not the post-switch result (e.output.Draft).
+	// Otherwise restoring it leaves the draft on the new template and the
+	// original template's values can never come back.
+	return NewSnapshot(id, e.source, reason, now)
 }
 
 func (e SwitchExecution) PreviousTemplate() string { return e.source.TemplateVersionID }
