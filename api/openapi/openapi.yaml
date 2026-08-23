@@ -1,0 +1,339 @@
+openapi: 3.0.3
+info:
+  title: 履历工坊 API
+  version: 1.0.0
+  description: 离线求职材料模板、草稿、预览、导出与隐私管理服务。
+servers:
+  - url: http://localhost:8080/api/v1
+security:
+  - ActorIdentity: []
+paths:
+  /templates:
+    get:
+      summary: 查询模板版本
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Order'
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TemplateStatus' } }
+        - { name: scenario, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/TemplateList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      summary: 创建模板草稿版本
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TemplateVersionInput' } } } }
+      responses:
+        '201': { description: 已创建, content: { application/json: { schema: { $ref: '#/components/schemas/TemplateResponse' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /templates/{id}/transitions:
+    post:
+      summary: 审核、发布或弃用模板
+      parameters: [ { $ref: '#/components/parameters/ID' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, version]
+              properties:
+                status: { $ref: '#/components/schemas/TemplateStatus' }
+                version: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200': { description: 已转换, content: { application/json: { schema: { $ref: '#/components/schemas/TemplateResponse' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /drafts:
+    get:
+      summary: 查询草稿
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Order'
+        - { name: owner_id, in: query, schema: { type: string } }
+        - { name: target_id, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, archived] } }
+      responses:
+        '200': { description: 草稿列表 }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      summary: 创建草稿
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateDraft' } } } }
+      responses:
+        '201': { description: 已创建, content: { application/json: { schema: { $ref: '#/components/schemas/DraftResponse' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /drafts/{id}:
+    get:
+      summary: 读取草稿
+      parameters: [ { $ref: '#/components/parameters/ID' } ]
+      responses:
+        '200': { description: 草稿, content: { application/json: { schema: { $ref: '#/components/schemas/DraftResponse' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 归档草稿
+      parameters: [ { $ref: '#/components/parameters/ID' }, { $ref: '#/components/parameters/IfMatch' } ]
+      responses:
+        '204': { description: 已归档 }
+        default: { $ref: '#/components/responses/Error' }
+  /drafts/{id}/autosave:
+    put:
+      summary: 乐观并发自动保存
+      parameters: [ { $ref: '#/components/parameters/ID' }, { $ref: '#/components/parameters/IfMatch' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [values], properties: { values: { type: object, additionalProperties: true } } } } }
+      responses:
+        '200': { description: 已保存, content: { application/json: { schema: { $ref: '#/components/schemas/DraftResponse' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /drafts/{id}/consistency:
+    get:
+      summary: 检查填写、模板、隐私与导出字段的一致性
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: scenario
+          in: query
+          required: true
+          schema: { type: string, enum: [campus, social, technical] }
+      responses:
+        '200':
+          description: 可预览和可导出状态、问题清单及稳定内容摘要
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, request_id]
+                properties:
+                  data: { $ref: '#/components/schemas/MaterialConsistencyReport' }
+                  request_id: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /drafts/{id}/switch-template:
+    post:
+      summary: 切换模板并返回缺失和未映射字段
+      parameters: [ { $ref: '#/components/parameters/ID' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_version_id, scenario, version]
+              properties:
+                template_version_id: { type: string }
+                scenario: { type: string }
+                version: { type: integer, format: int64 }
+      responses:
+        '200': { description: 切换结果, content: { application/json: { schema: { $ref: '#/components/schemas/SwitchResponse' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /drafts/{id}/snapshots:
+    get:
+      summary: 查询草稿快照
+      parameters: [ { $ref: '#/components/parameters/ID' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses: { '200': { description: 快照列表 }, default: { $ref: '#/components/responses/Error' } }
+    post:
+      summary: 创建草稿快照
+      parameters: [ { $ref: '#/components/parameters/ID' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, maxLength: 120 } } } } } }
+      responses: { '201': { description: 已创建 }, default: { $ref: '#/components/responses/Error' } }
+  /snapshots/{snapshot_id}/restore:
+    post:
+      summary: 恢复快照并保留恢复前版本
+      parameters:
+        - { name: snapshot_id, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses: { '200': { description: 已恢复 }, default: { $ref: '#/components/responses/Error' } }
+  /snapshots/compare:
+    get:
+      summary: 比较两个历史快照
+      parameters:
+        - { name: left, in: query, required: true, schema: { type: string } }
+        - { name: right, in: query, required: true, schema: { type: string } }
+      responses: { '200': { description: 字段级差异 }, default: { $ref: '#/components/responses/Error' } }
+  /profiles/{owner_id}:
+    get:
+      summary: 读取个人资料
+      parameters: [ { $ref: '#/components/parameters/OwnerID' } ]
+      responses: { '200': { description: 个人资料 }, default: { $ref: '#/components/responses/Error' } }
+    put:
+      summary: 保存个人资料
+      parameters: [ { $ref: '#/components/parameters/OwnerID' }, { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: 已保存 }, default: { $ref: '#/components/responses/Error' } }
+  /privacy/{owner_id}:
+    get:
+      summary: 读取隐私策略
+      parameters: [ { $ref: '#/components/parameters/OwnerID' } ]
+      responses: { '200': { description: 隐私策略 }, default: { $ref: '#/components/responses/Error' } }
+    put:
+      summary: 保存隐私策略
+      parameters: [ { $ref: '#/components/parameters/OwnerID' }, { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacyPolicy' } } } }
+      responses: { '200': { description: 已保存 }, default: { $ref: '#/components/responses/Error' } }
+  /exports:
+    post:
+      summary: 创建本地导出
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [draft_id, format]
+              properties:
+                draft_id: { type: string }
+                snapshot_id: { type: string }
+                format: { type: string, enum: [html, json] }
+      responses: { '201': { description: 导出清单 }, default: { $ref: '#/components/responses/Error' } }
+  /exports/{id}/validate:
+    post:
+      summary: 校验本地导出哈希和隐私字段
+      parameters: [ { $ref: '#/components/parameters/ID' } ]
+      responses: { '200': { description: 校验结果 }, default: { $ref: '#/components/responses/Error' } }
+  /attachments/{owner_id}:
+    post:
+      summary: 上传受控附件
+      parameters: [ { $ref: '#/components/parameters/OwnerID' } ]
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } } } } }
+      responses: { '201': { description: 附件元数据 }, default: { $ref: '#/components/responses/Error' } }
+  /attachments/{id}/content:
+    get:
+      summary: 读取受控附件并记录审计
+      parameters: [ { $ref: '#/components/parameters/ID' } ]
+      responses: { '200': { description: 附件内容 }, default: { $ref: '#/components/responses/Error' } }
+  /feedback:
+    get:
+      summary: 查询模板反馈
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' }, { name: status, in: query, schema: { type: string } }, { name: template_version_id, in: query, schema: { type: string } } ]
+      responses: { '200': { description: 反馈列表 }, default: { $ref: '#/components/responses/Error' } }
+    post:
+      summary: 提交模板问题
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [template_version_id, kind, message], properties: { template_version_id: { type: string }, kind: { type: string }, message: { type: string, maxLength: 2000 } } } } } }
+      responses: { '201': { description: 已提交 }, default: { $ref: '#/components/responses/Error' } }
+  /feedback/{id}/transitions:
+    post:
+      summary: 分流或解决模板问题
+      parameters: [ { $ref: '#/components/parameters/ID' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [triaged, resolved, dismissed] }, resolution: { type: string } } } } } }
+      responses: { '200': { description: 已更新 }, default: { $ref: '#/components/responses/Error' } }
+  /audits:
+    get:
+      summary: 查询访问和状态审计
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' }, { name: actor_id, in: query, schema: { type: string } }, { name: resource, in: query, schema: { type: string } }, { name: resource_id, in: query, schema: { type: string } }, { name: action, in: query, schema: { type: string } } ]
+      responses: { '200': { description: 审计列表 }, default: { $ref: '#/components/responses/Error' } }
+components:
+  securitySchemes:
+    ActorIdentity:
+      type: apiKey
+      in: header
+      name: X-Actor-ID
+      description: 同时通过 X-Actor-Role 指定 owner、reviewer 或 admin。
+  parameters:
+    ID: { name: id, in: path, required: true, schema: { type: string } }
+    OwnerID: { name: owner_id, in: path, required: true, schema: { type: string } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    PageSize: { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    Sort: { name: sort, in: query, schema: { type: string, enum: [updated_at, created_at, name, version, status] } }
+    Order: { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+    IfMatch: { name: If-Match, in: header, required: true, schema: { type: integer, format: int64 } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8 } }
+  responses:
+    Error:
+      description: 稳定错误响应
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    TemplateList:
+      description: 模板分页列表
+      content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/TemplateVersion' } }, page: { $ref: '#/components/schemas/PageMeta' }, request_id: { type: string } } } } }
+  schemas:
+    MaterialConsistencyReport:
+      type: object
+      required: [draft_id, draft_version, template_version_id, scenario, issues, visible_fields, export_fields, private_omissions, unmapped_fields, preview_ready, export_ready, consistency_digest]
+      properties:
+        draft_id: { type: string }
+        draft_version: { type: integer, format: int64 }
+        template_version_id: { type: string }
+        scenario: { type: string, enum: [campus, social, technical] }
+        issues:
+          type: array
+          items:
+            type: object
+            required: [code, severity, message]
+            properties:
+              code: { type: string }
+              field: { type: string }
+              severity: { type: string, enum: [blocker, warning] }
+              message: { type: string }
+        visible_fields: { type: array, items: { type: string } }
+        export_fields: { type: array, items: { type: string } }
+        private_omissions: { type: array, items: { type: string } }
+        unmapped_fields: { type: array, items: { type: string } }
+        preview_ready: { type: boolean }
+        export_ready: { type: boolean }
+        consistency_digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+    TemplateStatus: { type: string, enum: [draft, review, published, deprecated] }
+    FieldSpec:
+      type: object
+      required: [key, label, kind, required, private]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        kind: { type: string, enum: [text, long_text, date, collection, attachment] }
+        required: { type: boolean }
+        private: { type: boolean }
+        max_length: { type: integer }
+        aliases: { type: array, items: { type: string } }
+        visibility: { type: object, additionalProperties: true }
+    TemplateSection:
+      type: object
+      required: [key, title, order, fields]
+      properties:
+        key: { type: string }
+        title: { type: string }
+        order: { type: integer }
+        repeatable: { type: boolean }
+        fields: { type: array, items: { $ref: '#/components/schemas/FieldSpec' } }
+    TemplateVersionInput:
+      type: object
+      required: [template_id, version, name, category, scenarios, sections, style]
+      properties:
+        template_id: { type: string }
+        version: { type: integer, format: int64 }
+        name: { type: string }
+        category: { type: string }
+        scenarios: { type: array, items: { type: string } }
+        sections: { type: array, items: { $ref: '#/components/schemas/TemplateSection' } }
+        style: { type: object, additionalProperties: true }
+    TemplateVersion:
+      allOf:
+        - $ref: '#/components/schemas/TemplateVersionInput'
+        - type: object
+          properties: { id: { type: string }, status: { $ref: '#/components/schemas/TemplateStatus' }, published_at: { type: string, format: date-time }, deprecated_at: { type: string, format: date-time } }
+    TemplateResponse: { type: object, properties: { data: { $ref: '#/components/schemas/TemplateVersion' }, request_id: { type: string } } }
+    Draft:
+      type: object
+      properties: { id: { type: string }, owner_id: { type: string }, target_id: { type: string }, template_version_id: { type: string }, values: { type: object, additionalProperties: true }, unmapped: { type: object, additionalProperties: true }, version: { type: integer, format: int64 }, status: { type: string }, updated_at: { type: string, format: date-time } }
+    CreateDraft:
+      type: object
+      required: [owner_id, target_id, template_version_id, values]
+      properties: { owner_id: { type: string }, target_id: { type: string }, template_version_id: { type: string }, values: { type: object, additionalProperties: true } }
+    DraftResponse: { type: object, properties: { data: { $ref: '#/components/schemas/Draft' }, request_id: { type: string } } }
+    SwitchResponse: { type: object, properties: { data: { type: object, properties: { draft: { $ref: '#/components/schemas/Draft' }, mapped_fields: { type: array, items: { type: string } }, unmapped_fields: { type: array, items: { type: string } }, missing_fields: { type: array, items: { type: object, additionalProperties: true } } } }, request_id: { type: string } } }
+    PrivacyPolicy: { type: object, properties: { included_fields: { type: object, additionalProperties: { type: boolean } }, mask_in_preview: { type: object, additionalProperties: { type: boolean } }, allowed_attachments: { type: object, additionalProperties: { type: boolean } } } }
+    PageMeta: { type: object, properties: { number: { type: integer }, size: { type: integer }, total: { type: integer } } }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            fields: { type: array, items: { type: object, properties: { field: { type: string }, code: { type: string }, message: { type: string } } } }
+            request_id: { type: string }
