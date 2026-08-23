@@ -83,7 +83,11 @@ func (f PendingExportFile) RecordDiscard() PendingExportFile {
 	return f
 }
 
-func (f PendingExportFile) DiscardName() string       { return f.identity }
+// DiscardName returns the path of the file that was written and must be
+// removed on rollback. The file lives at storedName (e.g. "exports/<id>"),
+// not at the bare identity, so rolling back deletes the actual orphan rather
+// than a path that never existed.
+func (f PendingExportFile) DiscardName() string       { return f.storedName }
 func (f PendingExportFile) State() PendingExportState { return f.state }
 func (f PendingExportFile) StoredName() string        { return f.storedName }
 func (f PendingExportFile) Digest() string            { return f.digest }
