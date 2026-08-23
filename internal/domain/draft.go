@@ -113,16 +113,18 @@ func newSnapshotDiff(left, right DraftSnapshot) *snapshotDiff {
 }
 
 func (d *snapshotDiff) collectCandidateFields() {
-	seen := make(map[string]struct{}, len(d.right.Values))
-	for field := range d.right.Values {
-		if field == "" {
-			continue
+	seen := make(map[string]struct{}, len(d.left.Values)+len(d.right.Values))
+	for _, values := range []map[string]any{d.left.Values, d.right.Values} {
+		for field := range values {
+			if field == "" {
+				continue
+			}
+			if _, exists := seen[field]; exists {
+				continue
+			}
+			seen[field] = struct{}{}
+			d.candidates = append(d.candidates, field)
 		}
-		if _, exists := seen[field]; exists {
-			continue
-		}
-		seen[field] = struct{}{}
-		d.candidates = append(d.candidates, field)
 	}
 	sort.Strings(d.candidates)
 }
