@@ -54,6 +54,7 @@ type ProfileWriteReceipt struct {
 	stage       ProfileWriteStage
 	candidate   Profile
 	baseVersion int64
+	committed   Profile
 }
 
 func NewProfileWriteReceipt(candidate Profile, baseVersion int64) ProfileWriteReceipt {
@@ -64,11 +65,12 @@ func NewProfileWriteReceipt(candidate Profile, baseVersion int64) ProfileWriteRe
 	}
 }
 
-func (r ProfileWriteReceipt) RepositoryAccepted(_ Profile) ProfileWriteReceipt {
+func (r ProfileWriteReceipt) RepositoryAccepted(saved Profile) ProfileWriteReceipt {
 	if r.stage != ProfileWriteReceived {
 		return r
 	}
 	r.stage = ProfileWriteReplied
+	r.committed = copyCandidateProfile(saved)
 	return r
 }
 
@@ -82,6 +84,9 @@ func (r ProfileWriteReceipt) RepositoryFailed() ProfileWriteReceipt {
 func (r ProfileWriteReceipt) ClientProfile() Profile {
 	if r.stage != ProfileWriteReplied {
 		return Profile{}
+	}
+	if r.committed.Version > 0 {
+		return copyCandidateProfile(r.committed)
 	}
 	response := copyCandidateProfile(r.candidate)
 	response.Version = r.baseVersion
