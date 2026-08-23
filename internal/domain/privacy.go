@@ -34,12 +34,9 @@ func (p PrivacyPolicy) ResolveAttachmentGrant(requestedID string, owner bool) At
 		resolution.grantID = requestedID
 		return resolution
 	}
-	for candidateID, enabled := range p.AllowedAttachments {
-		if !enabled {
-			continue
-		}
+	if p.AllowedAttachments[requestedID] {
 		resolution.status = AttachmentGrantFound
-		resolution.grantID = candidateID
+		resolution.grantID = requestedID
 		return resolution
 	}
 	resolution.status = AttachmentGrantMissing
