@@ -1,0 +1,56 @@
+name: cry076-resume-workspace
+
+services:
+  resume-database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: cry076
+      POSTGRES_USER: cry076
+      POSTGRES_PASSWORD: cry076
+    ports:
+      - "${CRY076_POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=cry076 --dbname=cry076 --quiet"]
+      interval: 2s
+      timeout: 4s
+      retries: 30
+    volumes:
+      - resume-catalog-data:/var/lib/postgresql/data
+
+  resume-migrations:
+    build:
+      context: .
+      target: runtime
+    command: ["/usr/local/bin/resume-migrate", "/opt/resume/migrations"]
+    environment:
+      DATABASE_URL: postgres://cry076:cry076@resume-database:5432/cry076?sslmode=disable
+    depends_on:
+      resume-database:
+        condition: service_healthy
+    restart: "no"
+
+  resume-api:
+    build:
+      context: .
+      target: runtime
+    environment:
+      DATABASE_URL: postgres://cry076:cry076@resume-database:5432/cry076?sslmode=disable
+      HTTP_ADDRESS: :8080
+      STORAGE_ROOT: /var/lib/resume-workspace/files
+      ALLOWED_ORIGINS: http://127.0.0.1:5173
+    ports:
+      - "${CRY076_HTTP_PORT:-8080}:8080"
+    volumes:
+      - resume-private-files:/var/lib/resume-workspace/files
+    depends_on:
+      resume-migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  resume-catalog-data:
+  resume-private-files:
